@@ -264,17 +264,13 @@ def main(args):
         print('Training time {}'.format(total_time_str))
 
         # save the weight of the last iteration
-        if args.ema and last_model is not None:
-            # use ema to compute the weights
-            # update the current model 
-            for ema_param, param in zip(model.parameters(), last_model.parameters()):
-                ema_param.data.mul_(1 - args.ema_beta).add_(param.data, alpha=args.ema_beta)
-        
-        if last_model is not None:
-            import gc
-            del last_model
-            gc.collect()
-        last_model = model
+        if args.ema and last_model:  # has moving model
+                for name, ema_param, param in zip(last_model.named_parameters(), model.parameters()):
+                    if name in last_model.encoder_params(): # only update encoder
+                        ema_param.data.mul_(args.ema_beta).add_(1 - args.ema_beta, param.detach().data)
+        else:  # first iteration
+            last_model = model
+
         
     total_time = time.time() - init_time
     print('Total training time {}'.format(str(datetime.timedelta(seconds=int(total_time)))))
