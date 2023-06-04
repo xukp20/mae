@@ -44,7 +44,7 @@ def set_cifar10_args(args):
 def main(args):
     import warnings
     warnings.filterwarnings("ignore", category=UserWarning) # ignore the warning of Interpolate because of unmatched version of package
-    
+
     args = set_cifar10_args(args)
 
     timestamp = time.strftime('%m%d-%H%M')
@@ -186,7 +186,7 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
-        if args.output_dir:
+        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
                 args=args, model=None, model_without_ddp=model, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch='{}_linprobe_{}'.format(timestamp, epoch))

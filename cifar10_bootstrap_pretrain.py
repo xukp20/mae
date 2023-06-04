@@ -45,7 +45,7 @@ def get_addition_parser():
 
     # ema 
     parser.add_argument('--ema', action='store_true', help='use EMA')
-    parser.add_argument('--ema-beta', default=0.9, type=float, metavar='M', help='ema beta for model update')
+    parser.add_argument('--ema_beta', default=0.9, type=float, metavar='M', help='ema beta for model update')
 
     return parser
 
@@ -268,7 +268,7 @@ def main(args):
             # use ema to compute the weights
             # update the current model 
             for ema_param, param in zip(model.parameters(), last_model.parameters()):
-                ema_param.data.mul_(1 - args.ema_decay).add_(param.data, alpha=args.ema_decay)
+                ema_param.data.mul_(1 - args.ema_beta).add_(param.data, alpha=args.ema_beta)
         
         if last_model is not None:
             import gc
