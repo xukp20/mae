@@ -88,22 +88,21 @@ def train_one_epoch(model: torch.nn.Module,
             loss_value = loss.item()
         else:
             with torch.cuda.amp.autocast():
-                last_model.eval()
+                # last_model.eval()
+                last_model.to(device)
                 # check the type of last_model and model are BootstrapMAE
                 from models_mae import BootstrapMAE
                 assert isinstance(last_model, BootstrapMAE)
                 assert isinstance(model, BootstrapMAE)
-                # last model use encoder output
-                last_latent, _, ids_restore = last_model.forward_encoder(samples, mask_ratio=args.mask_ratio)
-                # print(mask.shape)
-                ids_keep = last_model.ids_keep
+
+                # last model use encoder output, the full images (all patches) are used
                 samples = samples.to(device, non_blocking=True)
-                last_latent = last_latent.to(device, non_blocking=True)
-                ids_keep = ids_keep.to(device, non_blocking=True)
-                ids_restore = ids_restore.to(device, non_blocking=True)
+                
+                last_latent = last_model.forward_encoder_all(samples)
+                # last_latent = last_latent.to(device, non_blocking=True)
 
                 # this model use decoder output
-                loss = model.forward_latent_loss(last_latent, samples, ids_keep, ids_restore)
+                loss = model.forward_latent_loss(last_latent, samples, mask_ratio=args.mask_ratio)
             
             loss_value = loss.item()
 
@@ -237,7 +236,7 @@ def main(args):
                 log_writer=log_writer,
                 args=args
             )
-            if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
+            if args.output_dir and (epoch % 20 == 0 or epoch + 1 == each_epoch):
                 misc.save_model(
                     args=args, model=None, model_without_ddp=model, optimizer=optimizer,    # single GPU
                     loss_scaler=loss_scaler, epoch='boot{}_{}_{}'.format(i, epoch, timestamp))

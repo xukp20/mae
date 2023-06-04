@@ -273,13 +273,6 @@ class BootstrapMAE(MaskedAutoencoderViT):
         for name, param in state_dict.items():
             if name in self.encoder_params:
                 self.state_dict()[name].copy_(param)
-
-    def given_masking(self, x, ids_keep):
-        N, L, D = x.shape  # batch, length, dim
-        # ids_keep: gather index
-        # keep x where mask=0
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
-        return x_masked
     
     def forward_encoder_with_mask(self, x, ids_keep):
         # given mask and ids_restore from the last model
@@ -308,51 +301,78 @@ class BootstrapMAE(MaskedAutoencoderViT):
 
         return x
 
-    def forward_latent_loss(self, last_latent, imgs, ids_keep, ids_restore):
-        # last_latent: [N, l, D]
-        # l is the len of the masked seq
+    def forward_latent_loss(self, last_latent, imgs, mask_ratio=0.75):
+        # last_latent: [N, L, D]
         # remove the cls as the target
+
         last_latent = last_latent[:, 1:, :]
 
-        latent = self.forward_encoder_with_mask(imgs, ids_keep)
+        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
         # use decoder to get the pred
         pred = self.forward_decoder(latent, ids_restore)
-        # keep the latent of ids_keep to compute loss
-        outputs = torch.gather(pred, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, pred.shape[-1]))
 
-        loss = (outputs - last_latent) ** 2
-        loss = loss.mean()  # no need of mask for each of the latent is visible
+        loss = (pred - last_latent) ** 2
+
+        # print(loss.shape)
+        # print(mask.shape)
+        loss = loss.mean(dim=-1)
+        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
     
-    # redefine to save the ids_keep for next model's random masking
-    def random_masking(self, x, mask_ratio):
-        """
-        Perform per-sample random masking by per-sample shuffling.
-        Per-sample shuffling is done by argsort random noise.
-        x: [N, L, D], sequence
-        """
-        N, L, D = x.shape  # batch, length, dim
-        len_keep = int(L * (1 - mask_ratio))
+    # # redefine to save the ids_keep for next model's random masking
+    # def random_masking(self, x, mask_ratio):
+    #     """
+    #     Perform per-sample random masking by per-sample shuffling.
+    #     Per-sample shuffling is done by argsort random noise.
+    #     x: [N, L, D], sequence
+    #     """
+    #     N, L, D = x.shape  # batch, length, dim
+    #     len_keep = int(L * (1 - mask_ratio))
         
-        noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
+    #     noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
         
-        # sort noise for each sample
-        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
+    #     # sort noise for each sample
+    #     ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+    #     ids_restore = torch.argsort(ids_shuffle, dim=1)
 
-        # keep the first subset
-        ids_keep = ids_shuffle[:, :len_keep]
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+    #     # keep the first subset
+    #     ids_keep = ids_shuffle[:, :len_keep]
+    #     x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
 
-        # generate the binary mask: 0 is keep, 1 is remove
-        mask = torch.ones([N, L], device=x.device)
-        mask[:, :len_keep] = 0
-        # unshuffle to get the binary mask
-        mask = torch.gather(mask, dim=1, index=ids_restore)
+    #     # generate the binary mask: 0 is keep, 1 is remove
+    #     mask = torch.ones([N, L], device=x.device)
+    #     mask[:, :len_keep] = 0
+    #     # unshuffle to get the binary mask
+    #     mask = torch.gather(mask, dim=1, index=ids_restore)
 
-        self.ids_keep = ids_keep    # store for outside use
-        return x_masked, mask, ids_restore
+    #     self.ids_keep = ids_keep    # store for outside use
+    #     return x_masked, mask, ids_restore
 
+    # xkp: 2023/6/4 add: change way of bootstrapping
+    # - all patches are visible to the old model
+    # - reconstruct the masked patches' latent representation using the new encoder + decoder
+    def forward_encoder_all(self, x):
+        """
+            Keep all patches of X as the ground truth
+        """
+        x = self.patch_embed(x)
+
+        # add pos embed w/o cls token
+        x = x + self.pos_embed[:, 1:, :]
+
+        # no masking here
+
+        # append cls token
+        cls_token = self.cls_token + self.pos_embed[:, :1, :]
+        cls_tokens = cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        # apply Transformer blocks
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+
+        return x
 
 # xkp: 2023/6/2 add: encoder same as DeiT-tiny for CIFAR-10
 def mae_vit_tiny_patch4_dec96d6b(**kwargs):
