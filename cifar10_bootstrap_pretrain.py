@@ -43,6 +43,10 @@ def get_addition_parser():
     parser.add_argument('-k', '--k', default=5, type=int, metavar='N', help='number of bootstrap iterations')
     parser.add_argument('--gpu_id', default=0, type=int, metavar='N', help='gpu id')
 
+    # ema 
+    parser.add_argument('--ema', action='store_true', help='use EMA')
+    parser.add_argument('--ema-beta', default=0.9, type=float, metavar='M', help='ema beta for model update')
+
     return parser
 
 
@@ -231,6 +235,7 @@ def main(args):
         start_time = time.time()
         for epoch in range(args.start_epoch, each_epoch):
             train_stats = train_one_epoch(
+                i,
                 model, last_model,
                 data_loader_train,
                 optimizer, device, epoch, loss_scaler,
@@ -256,7 +261,12 @@ def main(args):
         print('Training time {}'.format(total_time_str))
 
         # save the weight of the last iteration
-        last_model = model.to('cpu')
+        if args.ema:
+            # use ema to compute the weights
+            # update the current model 
+            for ema_param, param in zip(model.parameters(), last_model.parameters()):
+                ema_param.data.mul_(1 - args.ema_decay).add_(param.data, alpha=args.ema_decay)
+        last_model = model
         
     total_time = time.time() - init_time
     print('Total training time {}'.format(str(datetime.timedelta(seconds=int(total_time)))))

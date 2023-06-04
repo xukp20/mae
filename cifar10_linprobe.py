@@ -1,4 +1,4 @@
-# rewrite main_finetune.py to use CIFAR10 for finetuning
+# rewrite main_linprobe for CIFAR10
 
 import argparse
 import datetime
@@ -9,22 +9,21 @@ import time
 from pathlib import Path
 
 import torch
-import torchvision.datasets as datasets
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 
 import timm
 
 assert timm.__version__ == "0.3.2" # version check
 from timm.models.layers import trunc_normal_
-from timm.data.mixup import Mixup
-from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 
-import util.lr_decay as lrd
 import util.misc as misc
-# from util.datasets import build_dataset, build_transform
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from util.lars import LARS
+from util.crop import RandomResizedCrop
 
 import models_vit
 
@@ -47,7 +46,6 @@ def main(args):
 
     timestamp = time.strftime('%m%d-%H%M')
 
-    # same
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(', ', ',\n'))
 
@@ -60,43 +58,21 @@ def main(args):
 
     cudnn.benchmark = True
 
-    # get data
-    def build_transform(is_train, args):
-        from timm.data import create_transform
-        from torchvision.transforms import InterpolationMode
-        if is_train:
-            transform = create_transform(
-                input_size=args.input_size,
-                is_training=True,
-                color_jitter=args.color_jitter,
-                auto_augment=args.aa,
-                interpolation=InterpolationMode.BICUBIC,
-                re_prob=args.reprob,
-                re_mode=args.remode,
-                re_count=args.recount,
-                mean=[0.4914, 0.4822, 0.4465], # xkp: cifar10 mean
-                std=[0.2023, 0.1994, 0.2010], # xkp: cifar10 std
-            )
-        else:
-            import torchvision.transforms as transforms
-            transform = transforms.Compose([
-                transforms.Resize(args.input_size, interpolation=InterpolationMode.BICUBIC),
-                transforms.CenterCrop(args.input_size),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.4940, 0.4851, 0.4504], # xkp: cifar10 mean
-                    std=[0.2467, 0.2429, 0.2616], # xkp: cifar10 std
-                ),
-            ])
-        return transform
-
-    transform_train = build_transform(is_train=True, args=args)
-    transform_val = build_transform(is_train=False, args=args)
-
+    # linear probe: weak augmentation
+    transform_train = transforms.Compose([
+            RandomResizedCrop(32, interpolation=3),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), 
+                                    (0.2023, 0.1994, 0.2010)),
+        ])
+    transform_val = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4940, 0.4850, 0.4504), (0.2467, 0.2429, 0.2616))
+        ])
     dataset_train = datasets.CIFAR10(root=args.data_path, train=True, download=True, transform=transform_train)
     dataset_val = datasets.CIFAR10(root=args.data_path, train=False, download=True, transform=transform_val)
 
-    # single GPU training
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
@@ -106,7 +82,6 @@ def main(args):
     else:
         log_writer = None
 
-    # data loader
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
@@ -123,22 +98,12 @@ def main(args):
         drop_last=False
     )
 
-    mixup_fn = None
-    mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
-    if mixup_active:
-        print("Mixup is activated!")
-        mixup_fn = Mixup(
-            mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=args.nb_classes)
-        
-    # model
     model = models_vit.__dict__[args.model](
-        num_classes = args.nb_classes,
-        drop_path_rate = args.drop_path,
+        num_classes=args.nb_classes,
         global_pool=args.global_pool,
     )
 
+    # the same
     if args.finetune and not args.eval:
         checkpoint = torch.load(args.finetune, map_location='cpu')
 
@@ -162,8 +127,17 @@ def main(args):
         else:
             assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
 
-        # manually initialize fc layer
-        trunc_normal_(model.head.weight, std=2e-5)
+        # manually initialize fc layer: following MoCo v3
+        trunc_normal_(model.head.weight, std=0.01)
+
+    # for linear prob only
+    # hack: revise model's head with BN
+    model.head = torch.nn.Sequential(torch.nn.BatchNorm1d(model.head.in_features, affine=False, eps=1e-6), model.head)
+    # freeze all but the head
+    for _, p in model.named_parameters():
+        p.requires_grad = False
+    for _, p in model.head.named_parameters():
+        p.requires_grad = True
 
     model.to(device)
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -178,21 +152,14 @@ def main(args):
     print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
     print("actual lr: %.2e" % args.lr)
 
-    # build optimizer with layer-wise lr decay (lrd)
-    param_groups = lrd.param_groups_lrd(model, args.weight_decay,
-        no_weight_decay_list=model.no_weight_decay(),
-        layer_decay=args.layer_decay
-    )
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    print("accumulate grad iterations: %d" % args.accum_iter)
+    print("effective batch size: %d" % eff_batch_size)
+
+    optimizer = LARS(model.head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(optimizer)
     loss_scaler = NativeScaler()
 
-    if mixup_fn is not None:
-        # smoothing is handled with mixup label transform
-        criterion = SoftTargetCrossEntropy()
-    elif args.smoothing > 0.:
-        criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
-    else:
-        criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss()
 
     print("criterion = %s" % str(criterion))
 
@@ -210,14 +177,14 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
-            args.clip_grad, mixup_fn,
+            max_norm=None,
             log_writer=log_writer,
             args=args
         )
         if args.output_dir:
             misc.save_model(
                 args=args, model=None, model_without_ddp=model, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch='{}_finetune_{}'.format(timestamp, epoch))
+                loss_scaler=loss_scaler, epoch='{}_linprobe_{}'.format(timestamp, epoch))
 
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
