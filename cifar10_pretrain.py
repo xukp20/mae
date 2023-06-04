@@ -35,11 +35,13 @@ def set_cifar10_args(args):
     args.input_size = 32
     args.data_path = './datasets/cifar10'
     args.epochs = 200
-    args.gpu_id = 0
+    args.gpu_id = 0 # default to use GPU 0
     return args
 
 def main(args):
     args = set_cifar10_args(args)
+
+    timestamp = time.strftime('%m%d-%H%M')
 
     # same
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -105,6 +107,8 @@ def main(args):
     print("Optimizer = %s" % str(optimizer))
     loss_scaler = NativeScaler()
 
+    misc.load_model(args=args, model_without_ddp=model, optimizer=optimizer, loss_scaler=loss_scaler)
+
     # train
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -118,7 +122,7 @@ def main(args):
         if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
                 args=args, model=None, model_without_ddp=model, optimizer=optimizer,    # single GPU
-                loss_scaler=loss_scaler, epoch=epoch)
+                loss_scaler=loss_scaler, epoch='{}_mae_pretrain_{}'.format(timestamp, epoch))
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
@@ -126,7 +130,7 @@ def main(args):
         if args.output_dir:
             if log_writer is not None:
                 log_writer.flush()
-            with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
+            with open(os.path.join(args.output_dir, "log-" + timestamp + ".txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
     total_time = time.time() - start_time

@@ -53,7 +53,8 @@ import sys
 from typing import Iterable
 import util.misc as misc
 import util.lr_sched as lr_sched
-def train_one_epoch(model: torch.nn.Module,
+def train_one_epoch(boot_strap_iter: int,
+                    model: torch.nn.Module,
                     last_model: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler,
@@ -63,7 +64,7 @@ def train_one_epoch(model: torch.nn.Module,
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
+    header = 'Iter-Epoch: [{}-{}]'.format(boot_strap_iter, epoch)
     print_freq = 20
 
     accum_iter = args.accum_iter
@@ -226,7 +227,7 @@ def main(args):
         loss_scaler = NativeScaler()
 
         # train
-        print(f"Start training for {args.epochs} epochs")
+        print(f"Start training for {args.epochs / args.k} epochs")
         start_time = time.time()
         for epoch in range(args.start_epoch, each_epoch):
             train_stats = train_one_epoch(
@@ -239,7 +240,7 @@ def main(args):
             if args.output_dir and (epoch % 20 == 0 or epoch + 1 == each_epoch):
                 misc.save_model(
                     args=args, model=None, model_without_ddp=model, optimizer=optimizer,    # single GPU
-                    loss_scaler=loss_scaler, epoch='boot{}_{}_{}'.format(i, epoch, timestamp))
+                    loss_scaler=loss_scaler, epoch='{}_boot{}_{}'.format(timestamp, i, epoch))
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                             'epoch': epoch,}
