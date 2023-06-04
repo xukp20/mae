@@ -39,6 +39,9 @@ def set_cifar10_args(args):
     return args
 
 def main(args):
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning) # ignore the warning of Interpolate because of unmatched version of package
+    
     args = set_cifar10_args(args)
 
     timestamp = time.strftime('%m%d-%H%M')

@@ -145,6 +145,9 @@ def train_one_epoch(boot_strap_iter: int,
 
 
 def main(args):
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning) # ignore the warning of Interpolate because of unmatched version of package
+    
     args = set_cifar10_args(args)
 
     timestamp = time.strftime('%m%d-%H%M')
@@ -207,7 +210,7 @@ def main(args):
             model.init_encoder(last_model.state_dict())
         else:
             model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss, reconstruct_latent=False)
-            print("Model = %s" % str(model))
+            # print("Model = %s" % str(model))
             
         model.to(device)
         
@@ -261,11 +264,16 @@ def main(args):
         print('Training time {}'.format(total_time_str))
 
         # save the weight of the last iteration
-        if args.ema:
+        if args.ema and last_model is not None:
             # use ema to compute the weights
             # update the current model 
             for ema_param, param in zip(model.parameters(), last_model.parameters()):
                 ema_param.data.mul_(1 - args.ema_decay).add_(param.data, alpha=args.ema_decay)
+        
+        if last_model is not None:
+            import gc
+            del last_model
+            gc.collect()
         last_model = model
         
     total_time = time.time() - init_time

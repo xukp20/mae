@@ -42,6 +42,9 @@ def set_cifar10_args(args):
 
 
 def main(args):
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning) # ignore the warning of Interpolate because of unmatched version of package
+    
     args = set_cifar10_args(args)
 
     timestamp = time.strftime('%m%d-%H%M')
@@ -67,6 +70,8 @@ def main(args):
                                     (0.2023, 0.1994, 0.2010)),
         ])
     transform_val = transforms.Compose([
+            transforms.Resize(36, interpolation=3),
+            transforms.CenterCrop(32),
             transforms.ToTensor(),
             transforms.Normalize((0.4940, 0.4850, 0.4504), (0.2467, 0.2429, 0.2616))
         ])
