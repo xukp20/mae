@@ -234,7 +234,7 @@ def main(args):
         loss_scaler = NativeScaler()
 
         # train
-        print(f"Start training for {args.epochs / args.k} epochs")
+        print(f"Start training for {args.epochs // args.k} epochs")
         start_time = time.time()
         for epoch in range(args.start_epoch, each_epoch):
             train_stats = train_one_epoch(
@@ -265,8 +265,8 @@ def main(args):
 
         # save the weight of the last iteration
         if args.ema and last_model:  # has moving model
-                for name, ema_param, param in zip(last_model.named_parameters(), model.parameters()):
-                    if name in last_model.encoder_params(): # only update encoder
+                for (name, ema_param), param in zip(last_model.named_parameters(), model.parameters()):
+                    if name in last_model.encoder_params: # only update encoder
                         ema_param.data.mul_(args.ema_beta).add_(1 - args.ema_beta, param.detach().data)
         else:  # first iteration
             last_model = model
