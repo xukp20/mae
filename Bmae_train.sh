@@ -1,0 +1,1 @@
+python cifar10_bootstrap_pretrain.py --batch_size=1024  --epochs=200 -k=3 --gpu_id=5 --norm_pix_loss

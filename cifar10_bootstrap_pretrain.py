@@ -159,7 +159,7 @@ def main(args):
     device = torch.device(args.gpu_id)
 
     # fix the seed for reproducibility
-    seed = args.seed + misc.get_rank()
+    seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -270,6 +270,11 @@ def main(args):
                         ema_param.data.mul_(args.ema_beta).add_(1 - args.ema_beta, param.detach().data)
         else:  # first iteration
             last_model = model
+
+        # final save
+    misc.save_model(
+                args=args, model=None, model_without_ddp=model, optimizer=optimizer,    # single GPU
+                loss_scaler=loss_scaler, epoch='bmae_pretrain')
 
         
     total_time = time.time() - init_time

@@ -36,7 +36,6 @@ def set_cifar10_args(args):
     args.input_size = 32
     args.data_path = './datasets/cifar10'
     args.epochs = 100
-    args.gpu_id = 0 # default to use GPU 0
     args.nb_classes = 10
     return args
 
@@ -55,7 +54,7 @@ def main(args):
     device = torch.device(args.gpu_id)
 
     # fix the seed for reproducibility
-    seed = args.seed + misc.get_rank()
+    seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -218,8 +217,9 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = get_args_parser()
-    args = args.parse_args()
+    parser = get_args_parser()
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU id to use.')
+    args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)

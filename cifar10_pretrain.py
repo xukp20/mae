@@ -35,7 +35,6 @@ def set_cifar10_args(args):
     args.input_size = 32
     args.data_path = './datasets/cifar10'
     args.epochs = 200
-    args.gpu_id = 0 # default to use GPU 0
     return args
 
 def main(args):
@@ -53,7 +52,7 @@ def main(args):
     device = torch.device(args.gpu_id)
 
     # fix the seed for reproducibility
-    seed = args.seed + misc.get_rank()
+    seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -136,14 +135,20 @@ def main(args):
             with open(os.path.join(args.output_dir, "log-" + timestamp + ".txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
+    # final save
+    misc.save_model(
+                args=args, model=None, model_without_ddp=model, optimizer=optimizer,    # single GPU
+                loss_scaler=loss_scaler, epoch='mae_pretrain')
+
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
-    args = get_args_parser()
-    args = args.parse_args()
+    parser = get_args_parser()
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU id to use.')
+    args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
